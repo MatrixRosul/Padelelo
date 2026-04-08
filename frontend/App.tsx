@@ -3,7 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { AuthProvider, useAuth } from './src/auth/AuthContext';
+import { AuthProvider, useAuth } from './src/auth';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { Colors } from './src/theme/colors';
