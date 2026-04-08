@@ -2,6 +2,7 @@
   "name": "padelelo-root",
   "private": true,
   "version": "1.0.0",
+  "main": "frontend/index.ts",
   "scripts": {
     "start": "npm --prefix frontend run start --",
     "android": "npm --prefix frontend run android --",
