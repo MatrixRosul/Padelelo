@@ -1,0 +1,28 @@
+export const Colors = {
+  primary: '#00376F',
+  primaryContainer: '#1E4E8C',
+  onPrimary: '#FFFFFF',
+  onPrimaryContainer: '#9DC1FF',
+  secondary: '#FFB300',
+  secondaryContainer: '#FEB300',
+  onSecondaryContainer: '#6A4800',
+  tertiary: '#003F3A',
+  background: '#FBF8FC',
+  surface: '#FBF8FC',
+  surfaceLow: '#F5F3F6',
+  surfaceLowest: '#FFFFFF',
+  surfaceHigh: '#EAE7EB',
+  surfaceHighest: '#E4E1E5',
+  surfaceVariant: '#E4E1E5',
+  outline: '#737781',
+  outlineVariant: '#C3C6D2',
+  textPrimary: '#1B1B1E',
+  textSecondary: '#434750',
+  success: '#005852',
+  error: '#BA1A1A',
+  accent: '#FFB300',
+  tabBarGlass: 'rgba(251, 248, 252, 0.86)',
+  primaryShadow: 'rgba(30, 78, 140, 0.18)',
+} as const;
+
+export type AppColor = keyof typeof Colors;
