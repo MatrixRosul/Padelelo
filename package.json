@@ -1,0 +1,13 @@
+{
+  "name": "padelelo-root",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "start": "npm --prefix frontend run start --",
+    "android": "npm --prefix frontend run android --",
+    "ios": "npm --prefix frontend run ios --",
+    "web": "npm --prefix frontend run web --",
+    "frontend": "npm --prefix frontend run start --",
+    "backend": "npm --prefix backend run start:dev --"
+  }
+}
