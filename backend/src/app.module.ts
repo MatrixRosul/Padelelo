@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 
 import { AdminModule } from './admin/admin.module';
 import { AuthModule } from './auth/auth.module';
+import { ClubsModule } from './clubs/clubs.module';
 import { RolesGuard } from './common/guards/roles.guard';
 import { HealthController } from './health.controller';
 import { ImportsModule } from './imports/imports.module';
@@ -35,6 +36,7 @@ import { UsersModule } from './users/users.module';
     PrismaModule,
     AuthModule,
     UsersModule,
+    ClubsModule,
     PlayersModule,
     TournamentsModule,
     RegistrationsModule,

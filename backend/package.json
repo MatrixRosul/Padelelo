@@ -6,7 +6,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
-    "start": "node dist/main.js",
+    "start": "node dist/src/main.js",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "lint": "eslint \"{src,test,prisma}/**/*.ts\"",
@@ -20,7 +20,9 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "prisma:seed": "prisma db seed",
-    "import:matches:csv": "ts-node --transpile-only scripts/import-matches-csv.ts"
+    "import:matches:csv": "ts-node --transpile-only scripts/import-matches-csv.ts",
+    "seed:test-users": "ts-node --transpile-only scripts/create-test-players.ts",
+    "seed:americano:demo": "ts-node --transpile-only scripts/seed-americano-demo.ts"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.4",

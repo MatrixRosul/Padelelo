@@ -37,7 +37,13 @@ type AuthContextValue = {
   token: string | null;
   user: AuthUser | null;
   authError: string | null;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (identifier: string, password: string) => Promise<void>;
+  signUp: (payload: {
+    fullName: string;
+    login: string;
+    password: string;
+    displayName?: string;
+  }) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -116,6 +122,18 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
+    let isActive = true;
+    const hardStopTimer = setTimeout(() => {
+      if (!isActive) {
+        return;
+      }
+
+      setApiAuthToken(null);
+      setToken(null);
+      setUser(null);
+      setIsLoading(false);
+    }, 12000);
+
     const bootstrap = async () => {
       try {
         const storedToken = await readStoredToken();
@@ -123,47 +141,104 @@ export function AuthProvider({ children }: PropsWithChildren) {
         const initialToken = storedToken ?? envToken;
 
         if (!initialToken) {
-          setIsLoading(false);
+          if (isActive) {
+            setIsLoading(false);
+          }
           return;
         }
 
         setApiAuthToken(initialToken);
-        const { data } = await apiClient.get<AuthUser>('/auth/me');
+        const { data } = await apiClient.get<AuthUser>('/auth/me', {
+          timeout: 7000,
+        });
+
+        if (!isActive) {
+          return;
+        }
 
         setToken(initialToken);
         setUser(data);
       } catch {
         setApiAuthToken(null);
         await clearStoredToken();
-        setToken(null);
-        setUser(null);
+        if (isActive) {
+          setToken(null);
+          setUser(null);
+        }
       } finally {
-        setIsLoading(false);
+        if (isActive) {
+          setIsLoading(false);
+        }
+
+        clearTimeout(hardStopTimer);
       }
     };
 
     void bootstrap();
+
+    return () => {
+      isActive = false;
+      clearTimeout(hardStopTimer);
+    };
   }, []);
 
-  const signIn = async (email: string, password: string) => {
+  const applyAuthSession = async (data: LoginResponse) => {
+    if (!data?.accessToken) {
+      throw new Error('Auth response did not include access token');
+    }
+
+    setApiAuthToken(data.accessToken);
+    setToken(data.accessToken);
+    setUser(data.user ?? null);
+    await persistStoredToken(data.accessToken);
+  };
+
+  const signIn = async (identifier: string, password: string) => {
     setIsSubmitting(true);
     setAuthError(null);
 
     try {
+      const normalized = identifier.trim().toLowerCase();
+
       const payload = {
-        email: email.trim().toLowerCase(),
+        identifier: normalized,
+        email: normalized.includes('@') ? normalized : undefined,
         password,
       };
 
       const { data } = await apiClient.post<LoginResponse>('/auth/login', payload);
-      if (!data?.accessToken) {
-        throw new Error('Login response did not include access token');
-      }
+      await applyAuthSession(data);
+    } catch (error) {
+      setAuthError(normalizeErrorMessage(error));
+      setApiAuthToken(null);
+      setToken(null);
+      setUser(null);
+      throw error;
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
-      setApiAuthToken(data.accessToken);
-      setToken(data.accessToken);
-      setUser(data.user ?? null);
-      await persistStoredToken(data.accessToken);
+  const signUp = async (payload: {
+    fullName: string;
+    login: string;
+    password: string;
+    displayName?: string;
+  }) => {
+    setIsSubmitting(true);
+    setAuthError(null);
+
+    try {
+      const normalizedLogin = payload.login.trim().toLowerCase();
+
+      const { data } = await apiClient.post<LoginResponse>('/auth/register', {
+        fullName: payload.fullName.trim(),
+        displayName: payload.displayName?.trim() || undefined,
+        login: normalizedLogin,
+        password: payload.password,
+      });
+
+      await applyAuthSession(data);
     } catch (error) {
       setAuthError(normalizeErrorMessage(error));
       setApiAuthToken(null);
@@ -197,6 +272,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       user,
       authError,
       signIn,
+      signUp,
       signOut,
     }),
     [authError, isLoading, isSubmitting, token, user],

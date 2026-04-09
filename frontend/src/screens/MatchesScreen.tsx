@@ -1,11 +1,16 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import axios from 'axios';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { apiClient } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { AppTopBar } from '../components/AppTopBar';
+import { OpenMatchesPanel } from '../components/OpenMatchesPanel';
+import { RootStackParamList } from '../navigation/RootNavigator';
 import { Colors } from '../theme/colors';
 import { toUserFriendlyError } from '../utils/httpError';
 
@@ -26,6 +31,8 @@ type MatchTeam = {
   player1: MatchTeamMember;
   player2: MatchTeamMember;
 };
+
+type OpenMatchScoringMode = 'POINTS' | 'SETS';
 
 type MatchItem = {
   id: string;
@@ -50,6 +57,7 @@ type PlayerMatchesResponse = {
 };
 
 const INITIAL_VISIBLE = 20;
+type Navigation = NativeStackNavigationProp<RootStackParamList>;
 
 function resolveIdentifier(user: ReturnType<typeof useAuth>['user']): string | null {
   if (!user?.playerProfile?.id) {
@@ -111,7 +119,62 @@ function resolveOutcome(match: MatchItem, playerId: string | null): { label: str
   return { label: 'Defeat', won: false };
 }
 
+function resolveOpponent(match: MatchItem, playerId: string | null): { id: string | null; title: string } {
+  if (!playerId) {
+    const fallback = match.teams[0]?.player1;
+    return {
+      id: fallback?.id ?? null,
+      title: fallback?.fullName ?? 'Player',
+    };
+  }
+
+  const ownTeam = match.teams.find(
+    (team) => team.player1.id === playerId || team.player2.id === playerId,
+  );
+
+  const opponentTeam = ownTeam
+    ? match.teams.find((team) => team.side !== ownTeam.side)
+    : match.teams[0];
+
+  const candidate = opponentTeam?.player1 ?? null;
+
+  return {
+    id: candidate?.id ?? null,
+    title: candidate?.fullName ?? candidate?.nickname ?? 'Player',
+  };
+}
+
+function parsePositiveInt(input: string, fallback: number): number {
+  const parsed = Number.parseInt(input, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function toOpenMatchCreateError(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const responseMessage = error.response?.data?.message;
+
+    if (typeof responseMessage === 'string' && responseMessage.trim().length > 0) {
+      return responseMessage;
+    }
+
+    if (Array.isArray(responseMessage) && responseMessage.length > 0) {
+      return responseMessage.join(', ');
+    }
+
+    if (error.response?.status === 404) {
+      return 'Open match API not found. Restart backend with latest code.';
+    }
+  }
+
+  return toUserFriendlyError(error, 'Could not create open match');
+}
+
 export function MatchesScreen() {
+  const navigation = useNavigation<Navigation>();
   const { user } = useAuth();
   const identifier = resolveIdentifier(user);
 
@@ -120,6 +183,16 @@ export function MatchesScreen() {
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [openMatchRefreshToken, setOpenMatchRefreshToken] = useState(0);
+  const [showInviteSquadComposer, setShowInviteSquadComposer] = useState(false);
+  const [createScoringMode, setCreateScoringMode] = useState<OpenMatchScoringMode>('POINTS');
+  const [createIsRated, setCreateIsRated] = useState(true);
+  const [createPointsToWin, setCreatePointsToWin] = useState('21');
+  const [createSetsToWin, setCreateSetsToWin] = useState('2');
+  const [createLocation, setCreateLocation] = useState('');
+  const [createNotes, setCreateNotes] = useState('');
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const loadMatches = useCallback(async () => {
     if (!identifier) {
@@ -151,6 +224,57 @@ export function MatchesScreen() {
   useEffect(() => {
     void loadMatches();
   }, [loadMatches]);
+
+  const createOpenMatch = useCallback(async () => {
+    if (!identifier) {
+      return;
+    }
+
+    setCreateLoading(true);
+    setCreateError(null);
+
+    try {
+      const payload: {
+        scoringMode: OpenMatchScoringMode;
+        isRated: boolean;
+        pointsToWin?: number;
+        setsToWin?: number;
+        location?: string;
+        notes?: string;
+      } = {
+        scoringMode: createScoringMode,
+        isRated: createIsRated,
+        location: createLocation.trim() || undefined,
+        notes: createNotes.trim() || undefined,
+      };
+
+      if (createScoringMode === 'POINTS') {
+        payload.pointsToWin = parsePositiveInt(createPointsToWin, 21);
+      } else {
+        payload.setsToWin = parsePositiveInt(createSetsToWin, 2);
+      }
+
+      await apiClient.post('/matches/open', payload);
+      setOpenMatchRefreshToken((previous) => previous + 1);
+      setShowInviteSquadComposer(false);
+      setCreateLocation('');
+      setCreateNotes('');
+      await loadMatches();
+    } catch (requestError) {
+      setCreateError(toOpenMatchCreateError(requestError));
+    } finally {
+      setCreateLoading(false);
+    }
+  }, [
+    createIsRated,
+    createLocation,
+    createNotes,
+    createPointsToWin,
+    createScoringMode,
+    createSetsToWin,
+    identifier,
+    loadMatches,
+  ]);
 
   const visibleMatches = useMemo(
     () => matches.slice(0, visibleCount),
@@ -206,17 +330,152 @@ export function MatchesScreen() {
             Track every battle, monitor form, and keep your Elo momentum alive.
           </Text>
 
-          <View style={styles.heroButtonsRow}>
-            <Pressable style={({ pressed }) => [styles.heroButtonPrimary, pressed && styles.pressed]}>
-              <MaterialIcons color={Colors.onSecondaryContainer} name="add-circle" size={18} />
-              <Text style={styles.heroButtonPrimaryText}>Create Match</Text>
-            </Pressable>
+          {identifier ? (
+            <View style={styles.heroButtonsRow}>
+              <Pressable
+                onPress={() => {
+                  setShowInviteSquadComposer((previous) => !previous);
+                  setCreateError(null);
+                }}
+                style={({ pressed }) => [styles.heroButtonPrimary, pressed && styles.pressed]}
+              >
+                <MaterialIcons color={Colors.onSecondaryContainer} name="group-add" size={18} />
+                <Text style={styles.heroButtonPrimaryText}>Invite Your Squad</Text>
+              </Pressable>
 
-            <Pressable style={({ pressed }) => [styles.heroButtonSecondary, pressed && styles.pressed]}>
-              <MaterialIcons color={Colors.onPrimary} name="group-add" size={18} />
-              <Text style={styles.heroButtonSecondaryText}>Join Match</Text>
-            </Pressable>
-          </View>
+              <Pressable
+                onPress={() => {
+                  setOpenMatchRefreshToken((previous) => previous + 1);
+                }}
+                style={({ pressed }) => [styles.heroButtonSecondary, pressed && styles.pressed]}
+              >
+                <MaterialIcons color={Colors.onPrimary} name="refresh" size={18} />
+                <Text style={styles.heroButtonSecondaryText}>Refresh Lobbies</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {identifier && showInviteSquadComposer ? (
+            <View style={styles.heroComposeCard}>
+              <Text style={styles.heroComposeTitle}>Create Open 2v2 Match</Text>
+
+              <View style={styles.heroComposeToggleRow}>
+                <Pressable
+                  onPress={() => {
+                    setCreateScoringMode('POINTS');
+                  }}
+                  style={({ pressed }) => [
+                    styles.heroComposeToggle,
+                    createScoringMode === 'POINTS' && styles.heroComposeToggleActive,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.heroComposeToggleText,
+                      createScoringMode === 'POINTS' && styles.heroComposeToggleTextActive,
+                    ]}
+                  >
+                    Points
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    setCreateScoringMode('SETS');
+                  }}
+                  style={({ pressed }) => [
+                    styles.heroComposeToggle,
+                    createScoringMode === 'SETS' && styles.heroComposeToggleActive,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.heroComposeToggleText,
+                      createScoringMode === 'SETS' && styles.heroComposeToggleTextActive,
+                    ]}
+                  >
+                    Sets
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    setCreateIsRated((previous) => !previous);
+                  }}
+                  style={({ pressed }) => [
+                    styles.heroComposeToggle,
+                    createIsRated && styles.heroComposeToggleActive,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.heroComposeToggleText,
+                      createIsRated && styles.heroComposeToggleTextActive,
+                    ]}
+                  >
+                    {createIsRated ? 'Rated' : 'Unrated'}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {createScoringMode === 'POINTS' ? (
+                <TextInput
+                  keyboardType="number-pad"
+                  onChangeText={setCreatePointsToWin}
+                  placeholder="Points to win (e.g. 21)"
+                  placeholderTextColor={Colors.outline}
+                  style={styles.heroComposeInput}
+                  value={createPointsToWin}
+                />
+              ) : (
+                <TextInput
+                  keyboardType="number-pad"
+                  onChangeText={setCreateSetsToWin}
+                  placeholder="Sets to win (e.g. 2)"
+                  placeholderTextColor={Colors.outline}
+                  style={styles.heroComposeInput}
+                  value={createSetsToWin}
+                />
+              )}
+
+              <TextInput
+                onChangeText={setCreateLocation}
+                placeholder="Location (optional)"
+                placeholderTextColor={Colors.outline}
+                style={styles.heroComposeInput}
+                value={createLocation}
+              />
+
+              <TextInput
+                multiline
+                numberOfLines={2}
+                onChangeText={setCreateNotes}
+                placeholder="Note (optional)"
+                placeholderTextColor={Colors.outline}
+                style={[styles.heroComposeInput, styles.heroComposeInputMultiline]}
+                value={createNotes}
+              />
+
+              {createError ? <Text style={styles.heroCreateError}>{createError}</Text> : null}
+
+              <Pressable
+                disabled={createLoading}
+                onPress={() => {
+                  void createOpenMatch();
+                }}
+                style={({ pressed }) => [
+                  styles.heroButtonPrimary,
+                  (pressed || createLoading) && styles.pressed,
+                ]}
+              >
+                <MaterialIcons color={Colors.onSecondaryContainer} name="sports-tennis" size={18} />
+                <Text style={styles.heroButtonPrimaryText}>Create Open Match</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
 
         {!identifier ? (
@@ -245,6 +504,13 @@ export function MatchesScreen() {
           </View>
         ) : null}
 
+        <OpenMatchesPanel
+          hideCreateCard
+          onLifecycleUpdate={loadMatches}
+          playerId={identifier}
+          refreshToken={openMatchRefreshToken}
+        />
+
         <View style={styles.sectionHead}>
           <Text style={styles.sectionTitle}>Past Battles</Text>
           <Text style={styles.sectionMeta}>Showing {visibleMatches.length}</Text>
@@ -269,9 +535,24 @@ export function MatchesScreen() {
             const outcome = resolveOutcome(match, playerId);
             const leagueName = match.tournamentCategory?.name || 'League';
             const mode = match.isRated ? 'Rated' : 'Unrated';
+            const opponent = resolveOpponent(match, playerId);
 
             return (
-              <View key={match.id} style={styles.matchCard}>
+              <Pressable
+                disabled={!opponent.id}
+                key={match.id}
+                onPress={() => {
+                  if (!opponent.id) {
+                    return;
+                  }
+
+                  navigation.navigate('PlayerDetails', {
+                    identifier: opponent.id,
+                    title: opponent.title,
+                  });
+                }}
+                style={({ pressed }) => [styles.matchCard, pressed && styles.pressed]}
+              >
                 <View style={styles.dateBlock}>
                   <Text style={styles.dateDay}>{dateParts.day}</Text>
                   <Text style={styles.dateMonth}>{dateParts.month}</Text>
@@ -298,7 +579,7 @@ export function MatchesScreen() {
                   </View>
                   <MaterialIcons color={Colors.outline} name="chevron-right" size={20} />
                 </View>
-              </View>
+              </Pressable>
             );
           })}
         </View>
@@ -401,6 +682,65 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  heroComposeCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.14)',
+    borderRadius: 16,
+    gap: 8,
+    marginTop: 10,
+    padding: 10,
+  },
+  heroComposeInput: {
+    backgroundColor: Colors.surfaceLowest,
+    borderColor: Colors.ghostBorder,
+    borderRadius: 10,
+    borderWidth: 1,
+    color: Colors.textPrimary,
+    fontSize: 12,
+    minHeight: 40,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  heroComposeInputMultiline: {
+    minHeight: 64,
+    textAlignVertical: 'top',
+  },
+  heroComposeTitle: {
+    color: Colors.onPrimary,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+  },
+  heroComposeToggle: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 999,
+    justifyContent: 'center',
+    minHeight: 32,
+    paddingHorizontal: 12,
+  },
+  heroComposeToggleActive: {
+    backgroundColor: Colors.secondaryContainer,
+  },
+  heroComposeToggleRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  heroComposeToggleText: {
+    color: Colors.onPrimary,
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  heroComposeToggleTextActive: {
+    color: Colors.onSecondaryContainer,
+  },
+  heroCreateError: {
+    color: '#FFD3D3',
+    fontSize: 11,
+    fontWeight: '700',
   },
   heroCard: {
     backgroundColor: Colors.primary,

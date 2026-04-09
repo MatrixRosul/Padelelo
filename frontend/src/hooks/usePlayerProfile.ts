@@ -23,10 +23,20 @@ type MatchTeam = {
 
 type MatchHistoryEntry = {
   id: string;
+  createdAt: string;
+  status: 'SCHEDULED' | 'COMPLETED' | 'CANCELLED' | 'CANCELED';
+  isRated: boolean;
   playedAt: string | null;
   winnerTeamSide: 'A' | 'B' | null;
   teams: MatchTeam[];
   setScores: MatchSetScore[];
+  tournament: {
+    id: string;
+    name: string;
+    slug: string;
+    startDate: string;
+    endDate: string;
+  } | null;
   tournamentCategory: {
     id: string;
     name: string;

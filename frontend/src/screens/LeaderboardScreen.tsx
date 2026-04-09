@@ -21,6 +21,7 @@ type PlayerListItem = {
   wins: number;
   losses: number;
   matchesPlayed: number;
+  draws?: number;
 };
 
 type PlayersListResponse = {
@@ -149,7 +150,13 @@ export function LeaderboardScreen() {
     void loadPlayers(1, false);
   }, [loadPlayers]);
 
-  const podium = useMemo(() => players.slice(0, 3), [players]);
+  const showPodium = searchQuery.length === 0;
+  const podium = useMemo(() => (showPodium ? players.slice(0, 3) : []), [players, showPodium]);
+  const listStartIndex = showPodium ? Math.min(3, players.length) : 0;
+  const listPlayers = useMemo(
+    () => (listStartIndex > 0 ? players.slice(listStartIndex) : players),
+    [listStartIndex, players],
+  );
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
@@ -169,44 +176,46 @@ export function LeaderboardScreen() {
           </View>
         </View>
 
-        <View style={styles.podiumRow}>
-          {[1, 0, 2].map((index) => {
-            const player = podium[index];
+        {showPodium ? (
+          <View style={styles.podiumRow}>
+            {[1, 0, 2].map((index) => {
+              const player = podium[index];
 
-            if (!player) {
-              return <View key={`empty-${index}`} style={styles.podiumGhost} />;
-            }
+              if (!player) {
+                return <View key={`empty-${index}`} style={styles.podiumGhost} />;
+              }
 
-            const rank = index + 1;
-            const title = resolvePlayerTitle(player);
+              const rank = index + 1;
+              const title = resolvePlayerTitle(player);
 
-            return (
-              <Pressable
-                key={player.id}
-                onPress={() => {
-                  navigation.navigate('PlayerDetails', {
-                    identifier: player.id,
-                    title,
-                  });
-                }}
-                style={({ pressed }) => [
-                  styles.podiumCard,
-                  rank === 1 && styles.podiumChampion,
-                  rank === 2 && styles.podiumSecond,
-                  rank === 3 && styles.podiumThird,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <View style={[styles.podiumAvatar, rank === 1 && styles.podiumAvatarChampion]}>
-                  <Text style={styles.podiumAvatarText}>{initials(title)}</Text>
-                </View>
-                <Text style={styles.podiumRank}>#{rank}</Text>
-                <Text numberOfLines={1} style={styles.podiumName}>{title}</Text>
-                <Text style={[styles.podiumElo, rank === 1 && styles.podiumEloChampion]}>{player.currentElo} ELO</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+              return (
+                <Pressable
+                  key={player.id}
+                  onPress={() => {
+                    navigation.navigate('PlayerDetails', {
+                      identifier: player.id,
+                      title,
+                    });
+                  }}
+                  style={({ pressed }) => [
+                    styles.podiumCard,
+                    rank === 1 && styles.podiumChampion,
+                    rank === 2 && styles.podiumSecond,
+                    rank === 3 && styles.podiumThird,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={[styles.podiumAvatar, rank === 1 && styles.podiumAvatarChampion]}>
+                    <Text style={styles.podiumAvatarText}>{initials(title)}</Text>
+                  </View>
+                  <Text style={styles.podiumRank}>#{rank}</Text>
+                  <Text numberOfLines={1} style={styles.podiumName}>{title}</Text>
+                  <Text style={[styles.podiumElo, rank === 1 && styles.podiumEloChampion]}>{player.currentElo} ELO</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
 
         <View style={styles.fullRankHeader}>
           <Text style={styles.fullRankTitle}>Full Rankings</Text>
@@ -249,10 +258,10 @@ export function LeaderboardScreen() {
         ) : null}
 
         <View style={styles.rankList}>
-          {players.map((player, index) => {
-            const rank = index + 1;
+          {listPlayers.map((player, index) => {
+            const rank = index + 1 + listStartIndex;
             const title = resolvePlayerTitle(player);
-            const draws = Math.max(player.matchesPlayed - player.wins - player.losses, 0);
+            const draws = player.draws ?? Math.max(player.matchesPlayed - player.wins - player.losses, 0);
             const record = `${player.wins}/${draws}/${player.losses}`;
             const isCurrentUser = player.id === currentPlayerId;
 
@@ -280,7 +289,7 @@ export function LeaderboardScreen() {
                 </View>
                 <View style={styles.rankRight}>
                   <Text style={[styles.rankElo, isCurrentUser && styles.rankEloCurrent]}>{player.currentElo}</Text>
-                  <Text style={[styles.rankCountry, isCurrentUser && styles.rankCountryCurrent]}>{player.country || 'N/A'}</Text>
+                  <Text style={[styles.rankCountry, isCurrentUser && styles.rankCountryCurrent]}>ELO</Text>
                 </View>
               </Pressable>
             );

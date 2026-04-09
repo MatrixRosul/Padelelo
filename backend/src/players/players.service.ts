@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { MatchStatus, Prisma, TeamSide, TournamentStatus } from '@prisma/client';
 
 import { JwtPayload } from '../common/types/jwt-payload.type';
 import { buildPagination } from '../common/utils/pagination.util';
@@ -76,10 +76,32 @@ export class PlayersService {
       }),
     ]);
 
+    const statsByPlayerId = await this.computeLiveStatsForPlayers(items.map((item) => item.id));
+
+    const normalizedItems = items.map((item) => {
+      const stats = statsByPlayerId.get(item.id);
+      const fallbackDraws = Math.max(item.matchesPlayed - item.wins - item.losses, 0);
+
+      if (!stats) {
+        return {
+          ...item,
+          draws: fallbackDraws,
+        };
+      }
+
+      return {
+        ...item,
+        wins: stats.wins,
+        losses: stats.losses,
+        matchesPlayed: stats.matchesPlayed,
+        draws: stats.draws,
+      };
+    });
+
     const totalPages = Math.max(1, Math.ceil(total / safeLimit));
 
     return {
-      items,
+      items: normalizedItems,
       page: safePage,
       limit: safeLimit,
       total,
@@ -208,6 +230,18 @@ export class PlayersService {
   private async fetchMatchesByPlayerId(playerId: string) {
     return this.prisma.match.findMany({
       where: {
+        OR: [
+          {
+            tournamentId: null,
+          },
+          {
+            tournament: {
+              status: {
+                in: [TournamentStatus.FINISHED, TournamentStatus.COMPLETED],
+              },
+            },
+          },
+        ],
         teams: {
           some: {
             OR: [{ player1Id: playerId }, { player2Id: playerId }],
@@ -339,5 +373,136 @@ export class PlayersService {
       .replace(/[^a-z0-9._-]+/g, '-')
       .replace(/[-_.]{2,}/g, '-')
       .replace(/^[-_.]+|[-_.]+$/g, '');
+  }
+
+  private async computeLiveStatsForPlayers(playerIds: string[]) {
+    const uniquePlayerIds = Array.from(new Set(playerIds));
+
+    const stats = new Map(
+      uniquePlayerIds.map((playerId) => [
+        playerId,
+        {
+          matchesPlayed: 0,
+          wins: 0,
+          losses: 0,
+          draws: 0,
+        },
+      ]),
+    );
+
+    if (uniquePlayerIds.length === 0) {
+      return stats;
+    }
+
+    const matches = await this.prisma.match.findMany({
+      where: {
+        status: MatchStatus.COMPLETED,
+        OR: [
+          {
+            tournamentId: null,
+          },
+          {
+            tournament: {
+              status: {
+                in: [TournamentStatus.FINISHED, TournamentStatus.COMPLETED],
+              },
+            },
+          },
+        ],
+        teams: {
+          some: {
+            OR: [
+              {
+                player1Id: {
+                  in: uniquePlayerIds,
+                },
+              },
+              {
+                player2Id: {
+                  in: uniquePlayerIds,
+                },
+              },
+            ],
+          },
+        },
+      },
+      select: {
+        winnerTeamSide: true,
+        teams: {
+          select: {
+            side: true,
+            player1Id: true,
+            player2Id: true,
+          },
+        },
+      },
+    });
+
+    const requestedPlayerIdSet = new Set(uniquePlayerIds);
+
+    for (const match of matches) {
+      const teamA = match.teams.find((team) => team.side === TeamSide.A);
+      const teamB = match.teams.find((team) => team.side === TeamSide.B);
+
+      if (!teamA || !teamB) {
+        continue;
+      }
+
+      const teamAPlayers = [teamA.player1Id, teamA.player2Id];
+      const teamBPlayers = [teamB.player1Id, teamB.player2Id];
+
+      const trackedTeamA = teamAPlayers.filter((playerId) => requestedPlayerIdSet.has(playerId));
+      const trackedTeamB = teamBPlayers.filter((playerId) => requestedPlayerIdSet.has(playerId));
+
+      if (trackedTeamA.length === 0 && trackedTeamB.length === 0) {
+        continue;
+      }
+
+      for (const playerId of [...trackedTeamA, ...trackedTeamB]) {
+        const row = stats.get(playerId);
+        if (row) {
+          row.matchesPlayed += 1;
+        }
+      }
+
+      if (match.winnerTeamSide === TeamSide.A) {
+        for (const playerId of trackedTeamA) {
+          const row = stats.get(playerId);
+          if (row) {
+            row.wins += 1;
+          }
+        }
+
+        for (const playerId of trackedTeamB) {
+          const row = stats.get(playerId);
+          if (row) {
+            row.losses += 1;
+          }
+        }
+      } else if (match.winnerTeamSide === TeamSide.B) {
+        for (const playerId of trackedTeamB) {
+          const row = stats.get(playerId);
+          if (row) {
+            row.wins += 1;
+          }
+        }
+
+        for (const playerId of trackedTeamA) {
+          const row = stats.get(playerId);
+          if (row) {
+            row.losses += 1;
+          }
+        }
+      } else {
+        for (const playerId of [...trackedTeamA, ...trackedTeamB]) {
+          const row = stats.get(playerId);
+          if (row) {
+            row.draws += 1;
+          }
+        }
+      }
+    }
+
+    return stats;
   }
 }

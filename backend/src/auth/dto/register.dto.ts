@@ -6,25 +6,30 @@ import {
   IsEmail,
   IsEnum,
   IsOptional,
+  Matches,
   IsString,
-  IsStrongPassword,
   MaxLength,
   MinLength,
 } from 'class-validator';
 
 export class RegisterDto {
-  @ApiProperty()
+  @ApiProperty({ description: 'Login name, e.g. name_surname' })
+  @IsString()
+  @MinLength(3)
+  @MaxLength(40)
+  @Matches(/^[a-zA-Z0-9_]+$/, {
+    message: 'Login can contain only latin letters, numbers, and underscore',
+  })
+  login!: string;
+
+  @ApiProperty({ required: false, description: 'Optional explicit email; generated from login when omitted' })
+  @IsOptional()
   @IsEmail()
-  email!: string;
+  email?: string;
 
   @ApiProperty({ minLength: 8 })
-  @IsStrongPassword({
-    minLength: 8,
-    minLowercase: 1,
-    minUppercase: 1,
-    minNumbers: 1,
-    minSymbols: 0,
-  })
+  @IsString()
+  @MinLength(8)
   password!: string;
 
   @ApiProperty()

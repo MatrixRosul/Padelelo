@@ -1,6 +1,7 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { useNavigation } from '@react-navigation/native';
+import { CompositeNavigationProp, useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,6 +11,7 @@ import { useAuth } from '../auth/AuthContext';
 import { AppTopBar } from '../components/AppTopBar';
 import { PlayerProfileResponse, usePlayerProfile } from '../hooks/usePlayerProfile';
 import { RootTabParamList } from '../navigation/MainTabs';
+import { RootStackParamList } from '../navigation/RootNavigator';
 import { Colors } from '../theme/colors';
 
 type RivalApiItem = {
@@ -38,7 +40,10 @@ type RivalCard = {
 type MatchEntry = PlayerProfileResponse['matchHistory'][number];
 type MatchMember = MatchEntry['teams'][number]['player1'];
 
-type Navigation = BottomTabNavigationProp<RootTabParamList>;
+type Navigation = CompositeNavigationProp<
+  BottomTabNavigationProp<RootTabParamList>,
+  NativeStackNavigationProp<RootStackParamList>
+>;
 
 function resolveUserIdentifier(user: ReturnType<typeof useAuth>['user']): string | null {
   if (!user?.playerProfile?.id) {
@@ -231,7 +236,12 @@ export function DashboardScreen() {
           <Text style={styles.inviteLabel}>Tactical Advantage</Text>
           <Text style={styles.inviteTitle}>Invite Your Squad</Text>
 
-          <Pressable style={({ pressed }) => [styles.inviteButton, pressed && styles.pressed]}>
+          <Pressable
+            onPress={() => {
+              navigation.navigate('Tournaments');
+            }}
+            style={({ pressed }) => [styles.inviteButton, pressed && styles.pressed]}
+          >
             <Text style={styles.inviteButtonText}>Generate Link</Text>
             <MaterialIcons color={Colors.onSecondaryContainer} name="share" size={18} />
           </Pressable>
@@ -353,7 +363,10 @@ export function DashboardScreen() {
                 <Pressable
                   key={rival.id}
                   onPress={() => {
-                    navigation.navigate('Leaderboard');
+                    navigation.navigate('PlayerDetails', {
+                      identifier: rival.id,
+                      title: rival.title,
+                    });
                   }}
                   style={({ pressed }) => [styles.rivalCard, pressed && styles.pressed]}
                 >

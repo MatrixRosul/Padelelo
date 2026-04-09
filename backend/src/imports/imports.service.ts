@@ -29,7 +29,10 @@ type ParsedMatchRow = {
   setScores: ParsedSetScore[];
   winnerSide: TeamSide | null;
   isRated: boolean;
+  tournamentName: string;
+  tournamentType: 'AMERICANO' | 'GROUP_STAGE' | 'PLAYOFF';
   leagueName: string;
+  roundLabel?: string;
 };
 
 type ValidationIssue = {
@@ -38,7 +41,7 @@ type ValidationIssue = {
 };
 
 type CsvParseResult = {
-  mode: 'email' | 'legacy';
+  mode: 'email' | 'legacy' | 'tournament-results';
   rows: ParsedMatchRow[];
   playerNameByEmail: Map<string, string>;
   issues: ValidationIssue[];
@@ -72,6 +75,20 @@ type UpdatedRatingSummary = {
   matchesPlayed: number;
 };
 
+type ExistingImportPlayer = {
+  id: string;
+  email: string;
+  createdAt: Date;
+  playerProfile: {
+    fullName: string;
+    displayName: string | null;
+    nickname: string | null;
+    matchesPlayed: number;
+    wins: number;
+    losses: number;
+  } | null;
+};
+
 @Injectable()
 export class ImportsService {
   private readonly emailHeaders = [
@@ -86,6 +103,15 @@ export class ImportsService {
   ] as const;
 
   private readonly legacyHeaders = ['league', 'team_a', 'team_b', 'score_a', 'score_b'] as const;
+
+  private readonly tournamentResultsHeaders = [
+    'назва_турніру',
+    'формат_турніру',
+    'пара1',
+    'пара2',
+    'результат1',
+    'результат2',
+  ] as const;
 
   private readonly defaultLeague = 'Вища ліга';
   private readonly emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
@@ -138,7 +164,7 @@ export class ImportsService {
       });
 
       const ratingRecompute = await this.ratingsService.recomputeRatingsFromScratch();
-      const updatedRatings = await this.fetchUpdatedRatings(csvEmails);
+      const updatedRatings = await this.fetchUpdatedRatings(importResult.resolvedCsvEmails);
 
       const response = {
         mode: parseResult.mode,
@@ -238,6 +264,11 @@ export class ImportsService {
       return this.parseEmailSchemaRows(records, headerIndex);
     }
 
+    const hasTournamentResultsSchema = this.tournamentResultsHeaders.every((header) => headerIndex.has(header));
+    if (hasTournamentResultsSchema) {
+      return this.parseTournamentResultsSchemaRows(records, headerIndex);
+    }
+
     const hasLegacySchema = this.legacyHeaders.every((header) => headerIndex.has(header));
     if (hasLegacySchema) {
       return this.parseLegacySchemaRows(records, headerIndex);
@@ -246,6 +277,7 @@ export class ImportsService {
     throw new BadRequestException({
       message: 'CSV headers are invalid',
       expectedEmailSchema: this.emailHeaders,
+      expectedTournamentResultsSchema: this.tournamentResultsHeaders,
       expectedLegacySchema: this.legacyHeaders,
       receivedHeaders: headers,
     });
@@ -334,6 +366,8 @@ export class ImportsService {
           setScores,
           winnerSide: setsWonByA > setsWonByB ? TeamSide.A : TeamSide.B,
           isRated: true,
+          tournamentName: `CSV Email Import ${new Date().toISOString().slice(0, 10)}`,
+          tournamentType: 'AMERICANO',
           leagueName: this.normalizeLeagueName((values[headerIndex.get('league') ?? -1] ?? '').trim()),
         });
       } catch (error) {
@@ -357,6 +391,97 @@ export class ImportsService {
       rows,
       playerNameByEmail,
       issues: [],
+    };
+  }
+
+  private parseTournamentResultsSchemaRows(records: string[][], headerIndex: Map<string, number>): CsvParseResult {
+    const rows: ParsedMatchRow[] = [];
+    const issues: ValidationIssue[] = [];
+    const playerNameByEmail = new Map<string, string>();
+
+    const readValue = (values: string[], header: (typeof this.tournamentResultsHeaders)[number] | 'матч' | 'дата_матчу') => {
+      const index = headerIndex.get(header);
+      if (index === undefined) {
+        return '';
+      }
+
+      return (values[index] ?? '').trim();
+    };
+
+    for (let rowIndex = 1; rowIndex < records.length; rowIndex += 1) {
+      const values = records[rowIndex];
+      const rowNumber = rowIndex + 1;
+
+      try {
+        const tournamentName = this.normalizeTournamentName(readValue(values, 'назва_турніру'));
+        const tournamentType = this.parseTournamentType(readValue(values, 'формат_турніру'));
+
+        const teamA = this.parseLegacyTeam([readValue(values, 'пара1')]);
+        const teamB = this.parseLegacyTeam([readValue(values, 'пара2')]);
+
+        const scoreA = this.parseLegacyScore(readValue(values, 'результат1'), 'результат1');
+        const scoreB = this.parseLegacyScore(readValue(values, 'результат2'), 'результат2');
+
+        const p1Email = this.emailFromPlayerName(teamA[0]);
+        const p2Email = this.emailFromPlayerName(teamA[1]);
+        const p3Email = this.emailFromPlayerName(teamB[0]);
+        const p4Email = this.emailFromPlayerName(teamB[1]);
+
+        playerNameByEmail.set(p1Email, teamA[0]);
+        playerNameByEmail.set(p2Email, teamA[1]);
+        playerNameByEmail.set(p3Email, teamB[0]);
+        playerNameByEmail.set(p4Email, teamB[1]);
+
+        const winnerSide = scoreA === scoreB ? null : scoreA > scoreB ? TeamSide.A : TeamSide.B;
+
+        const dateRaw = readValue(values, 'дата_матчу');
+        const date = dateRaw
+          ? this.parseFlexibleDate(dateRaw, rowNumber)
+          : this.parseLegacyDate({
+              dateValue: '',
+              tourValue: String(rowIndex),
+              rowNumber,
+            });
+
+        rows.push({
+          rowNumber,
+          date,
+          emails: [p1Email, p2Email, p3Email, p4Email],
+          setScores: [
+            {
+              setNumber: 1,
+              teamAScore: scoreA,
+              teamBScore: scoreB,
+            },
+          ],
+          winnerSide,
+          isRated: winnerSide !== null,
+          tournamentName,
+          tournamentType,
+          leagueName: this.defaultLeague,
+          roundLabel: readValue(values, 'матч') || undefined,
+        });
+      } catch (error) {
+        issues.push({
+          row: rowNumber,
+          message: error instanceof Error ? error.message : 'Row validation failed',
+        });
+      }
+    }
+
+    if (rows.length === 0) {
+      throw new BadRequestException({
+        message: 'CSV validation failed for tournament results schema',
+        totalIssues: issues.length,
+        issues: issues.slice(0, 50),
+      });
+    }
+
+    return {
+      mode: 'tournament-results',
+      rows,
+      playerNameByEmail,
+      issues,
     };
   }
 
@@ -391,10 +516,10 @@ export class ImportsService {
         const scoreA = this.parseLegacyScore(readValue(values, 'score_a'), 'score_a');
         const scoreB = this.parseLegacyScore(readValue(values, 'score_b'), 'score_b');
 
-        const p1Email = this.emailFromLegacyName(teamA[0]);
-        const p2Email = this.emailFromLegacyName(teamA[1]);
-        const p3Email = this.emailFromLegacyName(teamB[0]);
-        const p4Email = this.emailFromLegacyName(teamB[1]);
+        const p1Email = this.emailFromPlayerName(teamA[0]);
+        const p2Email = this.emailFromPlayerName(teamA[1]);
+        const p3Email = this.emailFromPlayerName(teamB[0]);
+        const p4Email = this.emailFromPlayerName(teamB[1]);
 
         playerNameByEmail.set(p1Email, teamA[0]);
         playerNameByEmail.set(p2Email, teamA[1]);
@@ -420,7 +545,10 @@ export class ImportsService {
           ],
           winnerSide,
           isRated: winnerSide !== null,
+          tournamentName: 'CSV Legacy Import',
+          tournamentType: 'AMERICANO',
           leagueName: this.normalizeLeagueName(readValue(values, 'league')),
+          roundLabel: readValue(values, 'match') || undefined,
         });
       } catch (error) {
         issues.push({
@@ -578,6 +706,37 @@ export class ImportsService {
     return parsed;
   }
 
+  private parseFlexibleDate(rawValue: string, rowNumber: number): Date {
+    const value = rawValue.trim();
+    if (!value) {
+      throw new Error('Date is required');
+    }
+
+    if (this.isoDatePattern.test(value) || this.isoDateTimePattern.test(value)) {
+      return this.parseIsoDate(value);
+    }
+
+    const localDateMatch = value.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+    if (localDateMatch) {
+      const day = Number(localDateMatch[1]);
+      const month = Number(localDateMatch[2]);
+      const year = Number(localDateMatch[3]);
+
+      const parsed = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+      if (
+        parsed.getUTCFullYear() !== year ||
+        parsed.getUTCMonth() !== month - 1 ||
+        parsed.getUTCDate() !== day
+      ) {
+        throw new Error(`Invalid date value at row ${rowNumber}: ${value}`);
+      }
+
+      return parsed;
+    }
+
+    throw new Error(`Date must be ISO or DD-MM-YYYY format: ${value}`);
+  }
+
   private tokenizeCsv(csvContent: string): string[][] {
     const content = csvContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
@@ -645,11 +804,8 @@ export class ImportsService {
   }): Promise<{
     addedPlayers: ImportedPlayerSummary[];
     createdMatches: ImportedMatchSummary[];
+    resolvedCsvEmails: string[];
   }> {
-    const timestamps = params.rows.map((row) => row.date.getTime());
-    const startDate = new Date(Math.min(...timestamps));
-    const endDate = new Date(Math.max(...timestamps));
-
     return this.prisma.$transaction(async (tx) => {
       const addedPlayers: ImportedPlayerSummary[] = [];
       const createdMatches: ImportedMatchSummary[] = [];
@@ -664,16 +820,36 @@ export class ImportsService {
       await tx.tournamentCategory.deleteMany({});
       await tx.tournament.deleteMany({});
 
+      const canonicalEmailBySourceEmail = await this.resolveCanonicalEmailsForImportedPlayers(
+        tx,
+        params.csvEmails,
+        params.playerNameByEmail,
+      );
+
+      const remappedRows = params.rows.map((row) => ({
+        ...row,
+        emails: row.emails.map((email) => {
+          const sourceEmail = this.normalizeEmail(email);
+          return canonicalEmailBySourceEmail.get(sourceEmail) ?? sourceEmail;
+        }) as [string, string, string, string],
+      }));
+
+      const remappedCsvEmails = this.collectCsvEmails(remappedRows);
+      const remappedPlayerNameByEmail = this.remapPlayerNameByEmail(
+        params.playerNameByEmail,
+        canonicalEmailBySourceEmail,
+      );
+
       await tx.user.deleteMany({
         where: {
           role: UserRole.PLAYER,
-          email: { notIn: params.csvEmails },
+          email: { notIn: remappedCsvEmails },
         },
       });
 
       const existingUsers = await tx.user.findMany({
         where: {
-          email: { in: params.csvEmails },
+          email: { in: remappedCsvEmails },
         },
         include: {
           playerProfile: true,
@@ -696,9 +872,9 @@ export class ImportsService {
           .filter(Boolean),
       );
 
-      for (const email of params.csvEmails) {
+      for (const email of remappedCsvEmails) {
         const existingUser = userByEmail.get(email);
-        const csvName = params.playerNameByEmail.get(email)?.trim() || null;
+        const csvName = remappedPlayerNameByEmail.get(email)?.trim() || null;
 
         if (!existingUser) {
           const username = this.createUniqueUsername(this.usernameFromEmail(email), usedUsernames);
@@ -790,53 +966,99 @@ export class ImportsService {
         playerIdByEmail.set(email, existingUser.playerProfile.id);
       }
 
-      const leagueNames = Array.from(
-        new Set(params.rows.map((row) => this.normalizeLeagueName(row.leagueName))),
-      ).sort((a, b) => a.localeCompare(b));
-
-      const tournament = await tx.tournament.create({
-        data: {
-          name: `CSV Import ${new Date().toISOString().slice(0, 10)}`,
-          slug: `csv-import-${Date.now()}`,
-          description: 'Auto-generated tournament from CSV import',
-          location: 'Imported',
-          startDate,
-          endDate,
-          status: 'COMPLETED',
-          registrationStatus: 'CLOSED',
-          registrationOpenAt: startDate,
-          registrationCloseAt: endDate,
-          publishedAt: new Date(),
-          createdByUserId: params.actorUserId,
-          categories: {
-            create: leagueNames.map((leagueName) => ({
-              name: leagueName,
-              discipline: 'OPEN',
-              maxParticipants: Math.max(params.csvEmails.length, 4),
-              format: 'ROUND_ROBIN',
-            })),
-          },
-        },
-        include: {
-          categories: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-        },
-      });
-
-      const categoryIdByLeague = new Map(
-        tournament.categories.map((category) => [this.normalizeLeagueName(category.name), category.id]),
-      );
-
-      const fallbackCategoryId = tournament.categories[0]?.id;
-      if (!fallbackCategoryId) {
-        throw new BadRequestException('Failed to create import tournament category');
+      const rowsByTournamentName = new Map<string, ParsedMatchRow[]>();
+      for (const row of remappedRows) {
+        const list = rowsByTournamentName.get(row.tournamentName) ?? [];
+        list.push(row);
+        rowsByTournamentName.set(row.tournamentName, list);
       }
 
-      for (const row of params.rows) {
+      const tournamentMetaByName = new Map<
+        string,
+        {
+          id: string;
+          fallbackCategoryId: string;
+          categoryIdByLeague: Map<string, string>;
+        }
+      >();
+
+      let tournamentIndex = 0;
+      for (const [tournamentName, tournamentRows] of rowsByTournamentName.entries()) {
+        tournamentIndex += 1;
+
+        const rowDates = tournamentRows.map((row) => row.date.getTime());
+        const tournamentStartDate = new Date(Math.min(...rowDates));
+        const tournamentEndDate = new Date(Math.max(...rowDates));
+
+        const leagueNames = Array.from(
+          new Set(tournamentRows.map((row) => this.normalizeLeagueName(row.leagueName))),
+        ).sort((a, b) => a.localeCompare(b));
+
+        const maxParticipants = new Set(tournamentRows.flatMap((row) => row.emails)).size;
+        const type = tournamentRows[0]?.tournamentType ?? 'AMERICANO';
+
+        const tournamentSlugBase = this.normalizeUsername(tournamentName.replace(/\s+/g, '-')) || 'csv-import';
+        const tournamentSlug = `${tournamentSlugBase}-${Date.now()}-${tournamentIndex}`;
+
+        const createdTournament = await tx.tournament.create({
+          data: {
+            name: tournamentName,
+            type,
+            slug: tournamentSlug,
+            description: 'Auto-generated tournament from CSV import',
+            location: 'Imported',
+            date: tournamentStartDate,
+            courtsCount: 2,
+            maxPlayers: Math.max(maxParticipants, 4),
+            startDate: tournamentStartDate,
+            endDate: tournamentEndDate,
+            status: 'FINISHED',
+            registrationStatus: 'CLOSED',
+            registrationOpenAt: tournamentStartDate,
+            registrationCloseAt: tournamentEndDate,
+            publishedAt: new Date(),
+            startedAt: tournamentStartDate,
+            finishedAt: tournamentEndDate,
+            createdByUserId: params.actorUserId,
+            categories: {
+              create: leagueNames.map((leagueName) => ({
+                name: leagueName,
+                discipline: 'OPEN',
+                maxParticipants: Math.max(maxParticipants, 4),
+                format: 'ROUND_ROBIN',
+              })),
+            },
+          },
+          include: {
+            categories: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        });
+
+        const categoryIdByLeague = new Map(
+          createdTournament.categories.map((category) => [
+            this.normalizeLeagueName(category.name),
+            category.id,
+          ]),
+        );
+
+        const fallbackCategoryId = createdTournament.categories[0]?.id;
+        if (!fallbackCategoryId) {
+          throw new BadRequestException('Failed to create import tournament category');
+        }
+
+        tournamentMetaByName.set(tournamentName, {
+          id: createdTournament.id,
+          fallbackCategoryId,
+          categoryIdByLeague,
+        });
+      }
+
+      for (const row of remappedRows) {
         const [p1Email, p2Email, p3Email, p4Email] = row.emails;
         const p1 = playerIdByEmail.get(p1Email);
         const p2 = playerIdByEmail.get(p2Email);
@@ -847,12 +1069,18 @@ export class ImportsService {
           throw new BadRequestException(`Unable to resolve all players for CSV row ${row.rowNumber}`);
         }
 
+        const tournamentMeta = tournamentMetaByName.get(row.tournamentName);
+        if (!tournamentMeta) {
+          throw new BadRequestException(`Unable to resolve tournament for CSV row ${row.rowNumber}`);
+        }
+
         const normalizedLeagueName = this.normalizeLeagueName(row.leagueName);
-        const categoryId = categoryIdByLeague.get(normalizedLeagueName) ?? fallbackCategoryId;
+        const categoryId =
+          tournamentMeta.categoryIdByLeague.get(normalizedLeagueName) ?? tournamentMeta.fallbackCategoryId;
 
         const createdMatch = await tx.match.create({
           data: {
-            tournamentId: tournament.id,
+            tournamentId: tournamentMeta.id,
             tournamentCategoryId: categoryId,
             status: MatchStatus.COMPLETED,
             resultSource: MatchResultSource.IMPORTED,
@@ -861,7 +1089,7 @@ export class ImportsService {
             isRated: row.isRated,
             winnerTeamSide: row.winnerSide,
             createdByUserId: params.actorUserId,
-            roundLabel: `${normalizedLeagueName} | CSV Row ${row.rowNumber}`,
+            roundLabel: row.roundLabel || `${normalizedLeagueName} | CSV Row ${row.rowNumber}`,
             teams: {
               create: [
                 {
@@ -905,8 +1133,246 @@ export class ImportsService {
       return {
         addedPlayers,
         createdMatches,
+        resolvedCsvEmails: remappedCsvEmails,
       };
     });
+  }
+
+  private async resolveCanonicalEmailsForImportedPlayers(
+    tx: Prisma.TransactionClient,
+    csvEmails: string[],
+    playerNameByEmail: Map<string, string>,
+  ): Promise<Map<string, string>> {
+    const existingPlayers = (await tx.user.findMany({
+      where: {
+        role: UserRole.PLAYER,
+        playerProfile: {
+          isNot: null,
+        },
+      },
+      select: {
+        id: true,
+        email: true,
+        createdAt: true,
+        playerProfile: {
+          select: {
+            fullName: true,
+            displayName: true,
+            nickname: true,
+            matchesPlayed: true,
+            wins: true,
+            losses: true,
+          },
+        },
+      },
+    })) as ExistingImportPlayer[];
+
+    const canonicalBySource = new Map<string, string>();
+    const assignedCanonicalByName = new Map<string, string>();
+
+    for (const sourceEmailRaw of csvEmails) {
+      const sourceEmail = this.normalizeEmail(sourceEmailRaw);
+      const sourceName =
+        playerNameByEmail.get(sourceEmail)?.trim() || playerNameByEmail.get(sourceEmailRaw)?.trim() || '';
+
+      let resolvedEmail = sourceEmail;
+
+      if (sourceName && sourceEmail.endsWith('@padelelo.local')) {
+        const candidateEmail = this.findBestExistingEmailForImportedName(sourceName, existingPlayers);
+
+        if (candidateEmail) {
+          const normalizedName = this.normalizePersonName(sourceName) || sourceName.toLowerCase();
+          const alreadyAssignedName = assignedCanonicalByName.get(candidateEmail);
+
+          if (!alreadyAssignedName || alreadyAssignedName === normalizedName) {
+            assignedCanonicalByName.set(candidateEmail, normalizedName);
+            resolvedEmail = candidateEmail;
+          }
+        }
+      }
+
+      canonicalBySource.set(sourceEmail, resolvedEmail);
+    }
+
+    return canonicalBySource;
+  }
+
+  private findBestExistingEmailForImportedName(name: string, candidates: ExistingImportPlayer[]): string | null {
+    const normalizedName = this.normalizePersonName(name);
+    if (!normalizedName) {
+      return null;
+    }
+
+    const normalizedLogin = this.normalizeUsername(this.transliterateToLatin(name).replace(/\s+/g, '_'));
+
+    const scored = candidates
+      .map((candidate) => {
+        const fullName = candidate.playerProfile?.fullName ?? '';
+        const displayName = candidate.playerProfile?.displayName ?? '';
+
+        const normalizedFullName = this.normalizePersonName(fullName);
+        const normalizedDisplayName = this.normalizePersonName(displayName);
+
+        const localPart = this.normalizeUsername(candidate.email.split('@')[0] ?? '');
+        const nickname = this.normalizeUsername(candidate.playerProfile?.nickname ?? '');
+
+        const transliteratedFullName = this.normalizeUsername(
+          this.transliterateToLatin(fullName).replace(/\s+/g, '_'),
+        );
+        const transliteratedDisplayName = this.normalizeUsername(
+          this.transliterateToLatin(displayName).replace(/\s+/g, '_'),
+        );
+
+        const nameExact =
+          normalizedFullName === normalizedName ||
+          (normalizedDisplayName.length > 0 && normalizedDisplayName === normalizedName);
+        const loginExact = Boolean(normalizedLogin) && (nickname === normalizedLogin || localPart === normalizedLogin);
+        const translitExact =
+          Boolean(normalizedLogin) &&
+          (transliteratedFullName === normalizedLogin || transliteratedDisplayName === normalizedLogin);
+
+        let score = 0;
+        if (nameExact) {
+          score += 700;
+        }
+
+        if (loginExact) {
+          score += 520;
+        }
+
+        if (translitExact) {
+          score += 320;
+        }
+
+        if (!candidate.email.toLowerCase().endsWith('@padelelo.local')) {
+          score += 80;
+        }
+
+        const activity =
+          (candidate.playerProfile?.matchesPlayed ?? 0) +
+          (candidate.playerProfile?.wins ?? 0) +
+          (candidate.playerProfile?.losses ?? 0);
+
+        score += Math.min(activity * 12, 180);
+
+        return {
+          email: this.normalizeEmail(candidate.email),
+          createdAt: candidate.createdAt,
+          score,
+          activity,
+          nameExact,
+          loginExact,
+          translitExact,
+        };
+      })
+      .filter((entry) => entry.nameExact || entry.loginExact || entry.translitExact);
+
+    if (scored.length === 0) {
+      return null;
+    }
+
+    scored.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+
+      if (b.activity !== a.activity) {
+        return b.activity - a.activity;
+      }
+
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
+
+    const best = scored[0];
+    const second = scored[1];
+
+    if (second && second.score === best.score && second.activity === best.activity) {
+      return null;
+    }
+
+    return best.email;
+  }
+
+  private remapPlayerNameByEmail(
+    sourceMap: Map<string, string>,
+    canonicalBySource: Map<string, string>,
+  ): Map<string, string> {
+    const remapped = new Map<string, string>();
+
+    for (const [sourceEmailRaw, nameRaw] of sourceMap.entries()) {
+      const sourceEmail = this.normalizeEmail(sourceEmailRaw);
+      const targetEmail = canonicalBySource.get(sourceEmail) ?? sourceEmail;
+      const nextName = nameRaw.trim();
+      const currentName = remapped.get(targetEmail) ?? '';
+
+      if (!currentName || nextName.length > currentName.length) {
+        remapped.set(targetEmail, nextName);
+      }
+    }
+
+    return remapped;
+  }
+
+  private normalizePersonName(value: string): string {
+    return value
+      .toLowerCase()
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9а-яіїєґё]+/gi, ' ')
+      .trim()
+      .replace(/\s+/g, ' ');
+  }
+
+  private transliterateToLatin(value: string): string {
+    const mapping: Record<string, string> = {
+      а: 'a',
+      б: 'b',
+      в: 'v',
+      г: 'h',
+      ґ: 'g',
+      д: 'd',
+      е: 'e',
+      є: 'ye',
+      ж: 'zh',
+      з: 'z',
+      и: 'y',
+      і: 'i',
+      ї: 'yi',
+      й: 'y',
+      к: 'k',
+      л: 'l',
+      м: 'm',
+      н: 'n',
+      о: 'o',
+      п: 'p',
+      р: 'r',
+      с: 's',
+      т: 't',
+      у: 'u',
+      ф: 'f',
+      х: 'kh',
+      ц: 'ts',
+      ч: 'ch',
+      ш: 'sh',
+      щ: 'shch',
+      ь: '',
+      ю: 'yu',
+      я: 'ya',
+      ё: 'yo',
+      ъ: '',
+      "'": '',
+      '’': '',
+      'ʼ': '',
+    };
+
+    return value
+      .toLowerCase()
+      .split('')
+      .map((char) => mapping[char] ?? char)
+      .join('')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .replace(/\s+/g, ' ');
   }
 
   private async fetchUpdatedRatings(csvEmails: string[]): Promise<UpdatedRatingSummary[]> {
@@ -951,9 +1417,55 @@ export class ImportsService {
     return email.trim().toLowerCase();
   }
 
-  private emailFromLegacyName(name: string): string {
-    const normalized = name.trim().replace(/\s+/g, ' ').toLowerCase();
-    const digest = createHash('sha1').update(normalized).digest('hex').slice(0, 20);
+  private normalizeTournamentName(value: string): string {
+    const normalized = value.trim().replace(/\s+/g, ' ');
+    if (!normalized) {
+      return 'CSV Tournament';
+    }
+
+    return normalized;
+  }
+
+  private parseTournamentType(value: string): 'AMERICANO' | 'GROUP_STAGE' | 'PLAYOFF' {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return 'AMERICANO';
+    }
+
+    if (
+      normalized.includes('group') ||
+      normalized.includes('груп') ||
+      normalized.includes('round robin')
+    ) {
+      return 'GROUP_STAGE';
+    }
+
+    if (
+      normalized.includes('playoff') ||
+      normalized.includes('плей') ||
+      normalized.includes('elimination')
+    ) {
+      return 'PLAYOFF';
+    }
+
+    return 'AMERICANO';
+  }
+
+  private emailFromPlayerName(name: string): string {
+    const normalized = name.trim().replace(/\s+/g, ' ');
+    const slugBase = this.normalizeUsername(
+      normalized
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '_'),
+    );
+
+    if (slugBase) {
+      return `${slugBase}@padelelo.local`;
+    }
+
+    const digest = createHash('sha1').update(normalized.toLowerCase()).digest('hex').slice(0, 20);
     return `csv-${digest}@padelelo.local`;
   }
 

@@ -7,16 +7,12 @@ import {
 import { MatchResultSource, MatchStatus, TeamSide } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { RatingsService } from '../ratings/ratings.service';
 import { CreateMatchDto } from './dto/create-match.dto';
 import { SubmitMatchResultDto } from './dto/submit-match-result.dto';
 
 @Injectable()
 export class MatchesService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly ratingsService: RatingsService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async createMatch(dto: CreateMatchDto, actorUserId: string) {
     this.validateTeams(dto.teamA, dto.teamB);
@@ -110,7 +106,14 @@ export class MatchesService {
     return match;
   }
 
-  async submitResult(matchId: string, dto: SubmitMatchResultDto, actorUserId: string) {
+  async submitResult(
+    matchId: string,
+    dto: SubmitMatchResultDto,
+    actorUserId: string,
+    options?: {
+      allowOverwrite?: boolean;
+    },
+  ) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: {
@@ -122,7 +125,9 @@ export class MatchesService {
       throw new NotFoundException('Match not found');
     }
 
-    if (match.status === MatchStatus.COMPLETED) {
+    const isOverwrite = match.status === MatchStatus.COMPLETED && options?.allowOverwrite === true;
+
+    if (match.status === MatchStatus.COMPLETED && !isOverwrite) {
       throw new ConflictException('Match result already submitted');
     }
 
@@ -138,6 +143,14 @@ export class MatchesService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      if (isOverwrite) {
+        await tx.matchSetScore.deleteMany({
+          where: {
+            matchId: match.id,
+          },
+        });
+      }
+
       await tx.match.update({
         where: { id: match.id },
         data: {
@@ -164,27 +177,25 @@ export class MatchesService {
       await tx.auditLog.create({
         data: {
           actorUserId,
-          action: 'match.result.submit',
+          action: isOverwrite ? 'match.result.update' : 'match.result.submit',
           entityType: 'Match',
           entityId: match.id,
           context: {
             winnerSide: dto.winnerSide,
             source: dto.resultSource ?? MatchResultSource.MANUAL,
+            edited: isOverwrite,
           },
         },
       });
     });
 
-    let ratingSummary: unknown = null;
-    if (match.isRated) {
-      ratingSummary = await this.ratingsService.applyRatingsForMatch(match.id);
-    }
-
     return {
       matchId: match.id,
       winnerSide: dto.winnerSide,
       rated: match.isRated,
-      ratingSummary,
+      ratingSummary: null,
+      ratingDeferred: match.isRated,
+      edited: isOverwrite,
     };
   }
 

@@ -1,4 +1,5 @@
 import { Pressable, StyleProp, StyleSheet, Text, ViewStyle } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 
 import { Colors } from '../theme/colors';
 
@@ -15,26 +16,39 @@ export function AppButton({ title, onPress, disabled = false, style }: AppButton
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.button,
+        styles.buttonShell,
         disabled && styles.buttonDisabled,
         pressed && !disabled && styles.buttonPressed,
         style,
       ]}
     >
-      <Text style={styles.title}>{title}</Text>
+      <LinearGradient
+        colors={[Colors.primary, Colors.primaryContainer]}
+        end={{ x: 1, y: 1 }}
+        start={{ x: 0, y: 0 }}
+        style={styles.buttonGradient}
+      >
+        <Text style={styles.title}>{title}</Text>
+      </LinearGradient>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  button: {
+  buttonShell: {
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  buttonGradient: {
     alignItems: 'center',
-    backgroundColor: Colors.primary,
-    borderRadius: 12,
     justifyContent: 'center',
     minHeight: 48,
     paddingHorizontal: 16,
     paddingVertical: 12,
+    shadowColor: Colors.textPrimary,
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.06,
+    shadowRadius: 40,
   },
   buttonDisabled: {
     opacity: 0.6,

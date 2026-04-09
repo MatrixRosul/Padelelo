@@ -29,6 +29,85 @@ export class UsersService {
     });
   }
 
+  findByAuthIdentifier(identifier: string) {
+    const normalized = identifier.trim().toLowerCase();
+    if (!normalized) {
+      return Promise.resolve(null);
+    }
+
+    return this.prisma.user
+      .findFirst({
+        where: {
+          OR: [
+            {
+              email: {
+                equals: normalized,
+                mode: 'insensitive',
+              },
+            },
+            {
+              playerProfile: {
+                nickname: {
+                  equals: normalized,
+                  mode: 'insensitive',
+                },
+              },
+            },
+          ],
+        },
+        include: { playerProfile: true },
+      })
+      .then((exact) => {
+        if (exact) {
+          return exact;
+        }
+
+        return this.prisma.user.findFirst({
+          where: {
+            email: {
+              startsWith: `${normalized}@`,
+              mode: 'insensitive',
+            },
+          },
+          include: { playerProfile: true },
+        });
+      });
+  }
+
+  findClaimablePlayerByFullName(fullName: string) {
+    const normalized = fullName.trim().replace(/\s+/g, ' ');
+    if (!normalized) {
+      return Promise.resolve(null);
+    }
+
+    return this.prisma.user.findFirst({
+      where: {
+        role: UserRole.PLAYER,
+        email: {
+          endsWith: '@padelelo.local',
+          mode: 'insensitive',
+        },
+        playerProfile: {
+          OR: [
+            {
+              fullName: {
+                equals: normalized,
+                mode: 'insensitive',
+              },
+            },
+            {
+              displayName: {
+                equals: normalized,
+                mode: 'insensitive',
+              },
+            },
+          ],
+        },
+      },
+      include: { playerProfile: true },
+    });
+  }
+
   async createPlayerUser(input: {
     email: string;
     passwordHash: string;

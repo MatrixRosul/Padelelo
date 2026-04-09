@@ -11,12 +11,12 @@ export function AppTopBar({ rightBadge }: AppTopBarProps) {
   return (
     <View style={styles.container}>
       <View style={styles.brandRow}>
-        <MaterialIcons color={Colors.primaryContainer} name="sports-tennis" size={24} />
+        <MaterialIcons color={Colors.primary} name="sports-tennis" size={24} />
         <Text style={styles.brand}>Padelelo</Text>
       </View>
       <View style={styles.actions}>
         <Pressable style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
-          <MaterialIcons color={Colors.primaryContainer} name="notifications" size={22} />
+          <MaterialIcons color={Colors.primary} name="notifications" size={22} />
         </Pressable>
         {rightBadge ? (
           <View style={styles.badge}>
@@ -51,11 +51,10 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   brand: {
-    color: Colors.primaryContainer,
-    fontSize: 16,
-    fontStyle: 'italic',
+    color: Colors.textPrimary,
+    fontSize: 17,
     fontWeight: '900',
-    letterSpacing: -0.4,
+    letterSpacing: -0.2,
     textTransform: 'capitalize',
   },
   brandRow: {
@@ -65,21 +64,27 @@ const styles = StyleSheet.create({
   },
   container: {
     alignItems: 'center',
-    backgroundColor: Colors.tabBarGlass,
-    borderBottomColor: 'rgba(195, 198, 210, 0.28)',
-    borderBottomWidth: 1,
+    backgroundColor: Colors.glassSurface,
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingBottom: 10,
     paddingHorizontal: 20,
     paddingTop: 8,
+    shadowColor: Colors.textPrimary,
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.06,
+    shadowRadius: 40,
   },
   iconButton: {
     alignItems: 'center',
-    backgroundColor: Colors.surfaceLow,
+    backgroundColor: Colors.surfaceLowest,
     borderRadius: 999,
     height: 34,
     justifyContent: 'center',
+    shadowColor: Colors.textPrimary,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.04,
+    shadowRadius: 16,
     width: 34,
   },
   pressed: {

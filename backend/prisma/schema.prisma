@@ -30,10 +30,29 @@ enum AgeGroup {
 
 enum TournamentStatus {
   DRAFT
-  PUBLISHED
+  REGISTRATION
+  READY
   IN_PROGRESS
-  COMPLETED
+  FINISHED
   CANCELLED
+
+  // Legacy statuses preserved for backward compatibility with historical rows.
+  CREATED
+  REGISTRATION_OPEN
+  REGISTRATION_CLOSED
+  PUBLISHED
+  COMPLETED
+}
+
+enum TournamentType {
+  AMERICANO
+  GROUP_STAGE
+  PLAYOFF
+}
+
+enum TournamentScoringMode {
+  POINTS_SINGLE
+  SETS
 }
 
 enum RegistrationWindowStatus {
@@ -94,6 +113,34 @@ enum TeamSide {
   B
 }
 
+enum OpenMatchStatus {
+  OPEN
+  READY
+  RESULT_PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum OpenMatchScoringMode {
+  POINTS
+  SETS
+}
+
+enum OpenMatchParticipantStatus {
+  JOINED
+  INVITED
+  REQUESTED
+  DECLINED
+  REJECTED
+  REMOVED
+}
+
+enum OpenMatchApprovalDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum BracketStage {
   QUALIFICATION
   GROUP_STAGE
@@ -103,6 +150,12 @@ enum BracketStage {
   SEMIFINAL
   FINAL
   THIRD_PLACE
+}
+
+enum TournamentRoundType {
+  GROUP
+  AMERICANO
+  PLAYOFF
 }
 
 enum RatingHistoryReason {
@@ -136,6 +189,7 @@ model User {
   updatedAt        DateTime       @updatedAt
   playerProfile    PlayerProfile?
   createdTournaments Tournament[] @relation("TournamentCreatedBy")
+  createdClubs     Club[]         @relation("ClubCreatedBy")
   createdMatches   Match[]        @relation("MatchCreatedBy")
   requestedImports CSVImportJob[] @relation("ImportRequestedBy")
   updatedEloConfigs EloConfig[]   @relation("EloConfigUpdatedBy")
@@ -168,6 +222,14 @@ model PlayerProfile {
   matchTeamOneEntries MatchTeam[]          @relation("MatchTeamPlayerOne")
   matchTeamTwoEntries MatchTeam[]          @relation("MatchTeamPlayerTwo")
   ratingHistory      RatingHistory[]
+  createdOpenMatches OpenMatch[]             @relation("OpenMatchCreator")
+  openMatchParticipations OpenMatchParticipant[]
+  sentOpenMatchInvites OpenMatchParticipant[] @relation("OpenMatchInviteSender")
+  submittedOpenMatchResults OpenMatch[]      @relation("OpenMatchResultSubmitter")
+  openMatchResultApprovals OpenMatchResultApproval[]
+  tournamentRegistrations TournamentRegistration[]
+  tournamentStandings TournamentStanding[]
+  tournamentGroupEntries TournamentGroupPlayer[]
 
   @@index([currentElo(sort: Desc)])
   @@index([country, city])
@@ -176,9 +238,17 @@ model PlayerProfile {
 model Tournament {
   id                       String                   @id @default(cuid())
   name                     String
+  type                     TournamentType           @default(AMERICANO)
+  scoringMode              TournamentScoringMode    @default(POINTS_SINGLE)
+  pointsToWin              Int                      @default(21)
+  setsToWin                Int                      @default(1)
   slug                     String                   @unique
   description              String?
   location                 String?
+  date                     DateTime?
+  courtsCount              Int                      @default(1)
+  maxPlayers               Int                      @default(16)
+  clubId                   String?
   startDate                DateTime
   endDate                  DateTime
   status                   TournamentStatus         @default(DRAFT)
@@ -186,16 +256,44 @@ model Tournament {
   registrationOpenAt       DateTime?
   registrationCloseAt      DateTime?
   publishedAt              DateTime?
+  startedAt                DateTime?
+  finishedAt               DateTime?
+  cancelledAt              DateTime?
   createdByUserId          String
   createdAt                DateTime                 @default(now())
   updatedAt                DateTime                 @updatedAt
   createdBy                User                     @relation("TournamentCreatedBy", fields: [createdByUserId], references: [id])
+  club                     Club?                    @relation(fields: [clubId], references: [id], onDelete: SetNull)
   categories               TournamentCategory[]
   registrations            TournamentRegistration[]
   matches                  Match[]
+  rounds                   TournamentRound[]
+  standings                TournamentStanding[]
+  groups                   TournamentGroup[]
+  groupPlayers             TournamentGroupPlayer[]
 
   @@index([status, startDate])
   @@index([registrationStatus, registrationCloseAt])
+  @@index([type, date])
+  @@index([clubId, startDate])
+}
+
+model Club {
+  id              String       @id @default(cuid())
+  name            String
+  slug            String       @unique
+  city            String?
+  address         String?
+  courtsCount     Int          @default(1)
+  isActive        Boolean      @default(true)
+  createdByUserId String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  createdBy       User         @relation("ClubCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  tournaments     Tournament[]
+
+  @@index([name])
+  @@index([city, isActive])
 }
 
 model TournamentCategory {
@@ -250,24 +348,30 @@ model TournamentTeam {
 model TournamentRegistration {
   id                   String             @id @default(cuid())
   tournamentId         String
-  tournamentCategoryId String
-  teamId               String
+  tournamentCategoryId String?
+  teamId               String?
+  playerId             String?
   status               RegistrationStatus @default(PENDING)
   notes                String?
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
   tournament           Tournament         @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  tournamentCategory   TournamentCategory @relation(fields: [tournamentCategoryId], references: [id], onDelete: Cascade)
-  team                 TournamentTeam     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  tournamentCategory   TournamentCategory? @relation(fields: [tournamentCategoryId], references: [id], onDelete: Cascade)
+  team                 TournamentTeam?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  player               PlayerProfile?     @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   @@unique([tournamentCategoryId, teamId])
+  @@unique([tournamentId, playerId])
   @@index([tournamentId, status])
+  @@index([playerId])
 }
 
 model Match {
   id                   String            @id @default(cuid())
   tournamentId         String?
   tournamentCategoryId String?
+  groupId              String?
+  roundId              String?
   status               MatchStatus       @default(SCHEDULED)
   resultSource         MatchResultSource @default(MANUAL)
   scheduledAt          DateTime?
@@ -281,14 +385,157 @@ model Match {
   updatedAt            DateTime          @updatedAt
   tournament           Tournament?       @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
   tournamentCategory   TournamentCategory? @relation(fields: [tournamentCategoryId], references: [id], onDelete: SetNull)
+  group                TournamentGroup?  @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  round                TournamentRound?  @relation(fields: [roundId], references: [id], onDelete: SetNull)
   createdBy            User?             @relation("MatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   teams                MatchTeam[]
   setScores            MatchSetScore[]
   ratingHistory        RatingHistory[]
+  finalizedFromOpenMatch OpenMatch?          @relation("OpenMatchFinalMatch")
 
   @@index([status, scheduledAt])
   @@index([playedAt])
   @@index([tournamentCategoryId, bracketStage])
+  @@index([groupId])
+  @@index([roundId])
+}
+
+model OpenMatch {
+  id                        String                     @id @default(cuid())
+  creatorPlayerId           String
+  status                    OpenMatchStatus            @default(OPEN)
+  scoringMode               OpenMatchScoringMode       @default(POINTS)
+  isRated                   Boolean                    @default(true)
+  pointsToWin               Int                        @default(21)
+  setsToWin                 Int                        @default(2)
+  scheduledAt               DateTime?
+  location                  String?
+  notes                     String?
+  resultSubmittedByPlayerId String?
+  resultSubmittedAt         DateTime?
+  proposedWinnerSide        TeamSide?
+  proposedTeamAPoints       Int?
+  proposedTeamBPoints       Int?
+  proposedTeamASetsWon      Int?
+  proposedTeamBSetsWon      Int?
+  playedAt                  DateTime?
+  finalMatchId              String?                    @unique
+  ratingAppliedAt           DateTime?
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  creator                   PlayerProfile              @relation("OpenMatchCreator", fields: [creatorPlayerId], references: [id], onDelete: Cascade)
+  resultSubmittedBy         PlayerProfile?             @relation("OpenMatchResultSubmitter", fields: [resultSubmittedByPlayerId], references: [id], onDelete: SetNull)
+  finalMatch                Match?                     @relation("OpenMatchFinalMatch", fields: [finalMatchId], references: [id], onDelete: SetNull)
+  participants              OpenMatchParticipant[]
+  resultApprovals           OpenMatchResultApproval[]
+
+  @@index([creatorPlayerId, status])
+  @@index([status, scheduledAt])
+}
+
+model OpenMatchParticipant {
+  id                String                     @id @default(cuid())
+  openMatchId       String
+  playerId          String
+  status            OpenMatchParticipantStatus
+  teamSide          TeamSide?
+  teamPosition      Int?
+  invitedByPlayerId String?
+  respondedAt       DateTime?
+  joinedAt          DateTime?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  openMatch         OpenMatch                  @relation(fields: [openMatchId], references: [id], onDelete: Cascade)
+  player            PlayerProfile              @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  invitedBy         PlayerProfile?             @relation("OpenMatchInviteSender", fields: [invitedByPlayerId], references: [id], onDelete: SetNull)
+
+  @@unique([openMatchId, playerId])
+  @@unique([openMatchId, teamSide, teamPosition])
+  @@index([openMatchId, status])
+  @@index([playerId, status])
+}
+
+model OpenMatchResultApproval {
+  id         String                    @id @default(cuid())
+  openMatchId String
+  playerId   String
+  decision   OpenMatchApprovalDecision @default(PENDING)
+  decidedAt  DateTime?
+  createdAt  DateTime                  @default(now())
+  updatedAt  DateTime                  @updatedAt
+  openMatch  OpenMatch                 @relation(fields: [openMatchId], references: [id], onDelete: Cascade)
+  player     PlayerProfile             @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([openMatchId, playerId])
+  @@index([openMatchId, decision])
+  @@index([playerId, decision])
+}
+
+model TournamentGroup {
+  id          String                 @id @default(cuid())
+  tournamentId String
+  name        String
+  order       Int
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  tournament  Tournament             @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  players     TournamentGroupPlayer[]
+  matches     Match[]
+
+  @@index([tournamentId, order])
+  @@unique([tournamentId, order])
+  @@unique([tournamentId, name])
+}
+
+model TournamentGroupPlayer {
+  id           String         @id @default(cuid())
+  tournamentId String
+  groupId      String
+  playerId     String
+  seed         Int?
+  createdAt    DateTime       @default(now())
+  tournament   Tournament      @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  group        TournamentGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  player       PlayerProfile   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, playerId])
+  @@unique([tournamentId, playerId])
+  @@index([groupId])
+  @@index([playerId])
+}
+
+model TournamentRound {
+  id          String            @id @default(cuid())
+  tournamentId String
+  roundNumber Int
+  type        TournamentRoundType
+  order       Int
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  tournament  Tournament        @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  matches     Match[]
+
+  @@index([tournamentId, order])
+  @@unique([tournamentId, type, roundNumber])
+}
+
+model TournamentStanding {
+  id             String        @id @default(cuid())
+  tournamentId   String
+  playerId       String
+  points         Int           @default(0)
+  wins           Int           @default(0)
+  losses         Int           @default(0)
+  gamesWon       Int           @default(0)
+  gamesLost      Int           @default(0)
+  gameDifference Int           @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  tournament     Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  player         PlayerProfile @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, playerId])
+  @@index([tournamentId, points, gameDifference, gamesWon])
 }
 
 model MatchTeam {

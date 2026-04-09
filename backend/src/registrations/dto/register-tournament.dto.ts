@@ -3,17 +3,25 @@ import { Type } from 'class-transformer';
 import { IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
 
 export class RegisterTournamentDto {
-  @ApiProperty()
+  @ApiPropertyOptional({ description: 'Player profile id for individual registration. Defaults to current user profile.' })
+  @IsOptional()
   @IsString()
-  categoryId!: string;
+  playerId?: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional({ description: 'Legacy doubles flow field' })
+  @IsOptional()
   @IsString()
-  player1Id!: string;
+  categoryId?: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional({ description: 'Legacy doubles flow field' })
+  @IsOptional()
   @IsString()
-  player2Id!: string;
+  player1Id?: string;
+
+  @ApiPropertyOptional({ description: 'Legacy doubles flow field' })
+  @IsOptional()
+  @IsString()
+  player2Id?: string;
 
   @ApiPropertyOptional({ default: false })
   @IsOptional()

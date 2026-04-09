@@ -80,6 +80,28 @@ function formatSetScores(
     .join(', ');
 }
 
+function isCompletedMatch(match: MatchHistoryEntry): boolean {
+  return Boolean(match.playedAt) || match.setScores.length > 0 || Boolean(match.winnerTeamSide);
+}
+
+function resolveRecentMatchTimestamp(match: MatchHistoryEntry): number {
+  const createdAtTimestamp = Date.parse(match.createdAt);
+  if (!Number.isNaN(createdAtTimestamp)) {
+    return createdAtTimestamp;
+  }
+
+  const playedAtTimestamp = Date.parse(match.playedAt ?? '');
+  if (!Number.isNaN(playedAtTimestamp)) {
+    return playedAtTimestamp;
+  }
+
+  return 0;
+}
+
+function resolveMatchLeagueLabel(match: MatchHistoryEntry): string {
+  return match.tournament?.name || match.tournamentCategory?.name || 'Open Match';
+}
+
 function resolveOutcomeToken(match: MatchHistoryEntry, playerId: string): 'W' | 'L' | 'D' {
   const ownTeam = match.teams.find(
     (team) => team.player1.id === playerId || team.player2.id === playerId,
@@ -258,21 +280,32 @@ export function PlayerProfileSummary({ profile }: { profile: PlayerProfileRespon
     .slice(0, 5)
     .map((match) => resolveOutcomeToken(match, profile.id));
 
-  const deltaByMatchId = useMemo(() => {
-    const map = new Map<string, number>();
+  const ratingSnapshotByMatchId = useMemo(() => {
+    const map = new Map<string, { beforeRating: number; afterRating: number; delta: number }>();
 
     for (const entry of profile.eloHistory) {
       if (!entry.matchId || map.has(entry.matchId)) {
         continue;
       }
 
-      map.set(entry.matchId, entry.delta);
+      map.set(entry.matchId, {
+        beforeRating: entry.beforeRating,
+        afterRating: entry.afterRating,
+        delta: entry.delta,
+      });
     }
 
     return map;
   }, [profile.eloHistory]);
 
   const playerName = normalizeHumanName(profile.displayName) || normalizeHumanName(profile.fullName) || 'Player';
+
+  const recentMatches = useMemo(() => {
+    return [...profile.matchHistory]
+      .filter((match) => isCompletedMatch(match))
+      .sort((left, right) => resolveRecentMatchTimestamp(right) - resolveRecentMatchTimestamp(left))
+      .slice(0, 12);
+  }, [profile.matchHistory]);
 
   return (
     <View style={styles.container}>
@@ -476,10 +509,10 @@ export function PlayerProfileSummary({ profile }: { profile: PlayerProfileRespon
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Recent Matches</Text>
-        {profile.matchHistory.slice(0, 10).map((match) => {
+        {recentMatches.map((match) => {
           const teamA = match.teams.find((team) => team.side === 'A');
           const teamB = match.teams.find((team) => team.side === 'B');
-          const ratingDelta = deltaByMatchId.get(match.id);
+          const ratingSnapshot = ratingSnapshotByMatchId.get(match.id);
 
           const teamATitle = teamA
             ? `${displayPlayerName(teamA.player1)} / ${displayPlayerName(teamA.player2)}`
@@ -490,7 +523,24 @@ export function PlayerProfileSummary({ profile }: { profile: PlayerProfileRespon
 
           return (
             <View key={match.id} style={styles.matchCard}>
-              <Text style={styles.matchLeague}>{match.tournamentCategory?.name || 'League'}</Text>
+              <View style={styles.matchHeaderRow}>
+                <Text style={styles.matchLeague}>{resolveMatchLeagueLabel(match)}</Text>
+                <View
+                  style={[
+                    styles.matchTypeBadge,
+                    match.isRated ? styles.matchTypeBadgeRated : styles.matchTypeBadgeUnrated,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.matchTypeBadgeText,
+                      match.isRated ? styles.matchTypeBadgeTextRated : styles.matchTypeBadgeTextUnrated,
+                    ]}
+                  >
+                    {match.isRated ? 'RATED' : 'UNRATED'}
+                  </Text>
+                </View>
+              </View>
               <Text style={styles.matchTeams}>{teamATitle}</Text>
               <Text style={styles.matchTeams}>vs</Text>
               <Text style={styles.matchTeams}>{teamBTitle}</Text>
@@ -498,27 +548,42 @@ export function PlayerProfileSummary({ profile }: { profile: PlayerProfileRespon
               <View style={styles.matchScoreRow}>
                 <Text style={styles.matchScore}>{formatSetScores(match.setScores)}</Text>
 
-                {typeof ratingDelta === 'number' ? (
+                {ratingSnapshot ? (
                   <View
                     style={[
                       styles.matchDeltaPill,
-                      ratingDelta >= 0 ? styles.matchDeltaPillPositive : styles.matchDeltaPillNegative,
+                      ratingSnapshot.delta >= 0 ? styles.matchDeltaPillPositive : styles.matchDeltaPillNegative,
                     ]}
                   >
-                    <Text
-                      style={[
-                        styles.matchDeltaText,
-                        ratingDelta >= 0 ? styles.matchDeltaTextPositive : styles.matchDeltaTextNegative,
-                      ]}
-                    >
-                      {ratingDelta >= 0 ? `↑ +${ratingDelta}` : `↓ ${ratingDelta}`}
-                    </Text>
+                    <Text style={styles.matchDeltaLabel}>ELO</Text>
+                    <View style={styles.matchDeltaTrendRow}>
+                      <Text style={styles.matchDeltaRangeText}>{ratingSnapshot.beforeRating}</Text>
+                      <Text
+                        style={[
+                          styles.matchDeltaArrow,
+                          ratingSnapshot.delta >= 0 ? styles.matchDeltaTextPositive : styles.matchDeltaTextNegative,
+                        ]}
+                      >
+                        {ratingSnapshot.delta >= 0 ? '↑' : '↓'}
+                      </Text>
+                      <Text style={styles.matchDeltaRangeText}>{ratingSnapshot.afterRating}</Text>
+                      <Text
+                        style={[
+                          styles.matchDeltaText,
+                          ratingSnapshot.delta >= 0 ? styles.matchDeltaTextPositive : styles.matchDeltaTextNegative,
+                        ]}
+                      >
+                        {ratingSnapshot.delta >= 0 ? `+${ratingSnapshot.delta}` : `${ratingSnapshot.delta}`}
+                      </Text>
+                    </View>
                   </View>
                 ) : null}
               </View>
             </View>
           );
         })}
+
+        {recentMatches.length === 0 ? <Text style={styles.emptyText}>No completed matches yet.</Text> : null}
       </View>
     </View>
   );
@@ -717,7 +782,10 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   matchDeltaPill: {
+    alignItems: 'center',
     borderRadius: 999,
+    flexDirection: 'row',
+    gap: 6,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
@@ -726,6 +794,22 @@ const styles = StyleSheet.create({
   },
   matchDeltaPillNegative: {
     backgroundColor: 'rgba(186, 26, 26, 0.14)',
+  },
+  matchDeltaArrow: {
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  matchDeltaLabel: {
+    color: Colors.textSecondary,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  matchDeltaRangeText: {
+    color: Colors.textPrimary,
+    fontSize: 10,
+    fontWeight: '800',
   },
   matchDeltaText: {
     fontSize: 10,
@@ -736,12 +820,46 @@ const styles = StyleSheet.create({
   matchDeltaTextPositive: {
     color: Colors.success,
   },
+  matchDeltaTrendRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
   matchDeltaTextNegative: {
     color: Colors.error,
+  },
+  matchHeaderRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 2,
   },
   matchTeams: {
     color: Colors.textPrimary,
     fontSize: 12,
+  },
+  matchTypeBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  matchTypeBadgeRated: {
+    backgroundColor: 'rgba(0, 88, 82, 0.14)',
+  },
+  matchTypeBadgeText: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  matchTypeBadgeTextRated: {
+    color: Colors.success,
+  },
+  matchTypeBadgeTextUnrated: {
+    color: Colors.outline,
+  },
+  matchTypeBadgeUnrated: {
+    backgroundColor: Colors.outlineVariant,
   },
   negativeText: {
     color: Colors.error,

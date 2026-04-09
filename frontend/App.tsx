@@ -14,9 +14,9 @@ const navigationTheme = {
     ...DefaultTheme.colors,
     primary: Colors.primary,
     background: Colors.background,
-    card: Colors.surface,
+    card: Colors.surfaceLow,
     text: Colors.textPrimary,
-    border: Colors.outlineVariant,
+    border: 'transparent',
     notification: Colors.accent,
   },
 };

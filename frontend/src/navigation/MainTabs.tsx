@@ -1,5 +1,6 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { LinearGradient } from 'expo-linear-gradient';
 import type { ComponentProps } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
@@ -43,22 +44,28 @@ export function MainTabs() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: Colors.primaryContainer,
+        tabBarActiveTintColor: Colors.primary,
         tabBarInactiveTintColor: Colors.outline,
         tabBarStyle: styles.tabBar,
         tabBarItemStyle: styles.item,
         tabBarLabel: ({ focused, color }) => (
           <Text style={[styles.label, focused && styles.labelActive, { color }]}>{route.name}</Text>
         ),
-        tabBarIcon: ({ focused, color }) => (
-          <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
-            <MaterialIcons
-              color={focused ? Colors.onPrimary : color}
-              name={getTabIcon(route.name)}
-              size={20}
-            />
-          </View>
-        ),
+        tabBarIcon: ({ focused, color }) =>
+          focused ? (
+            <LinearGradient
+              colors={[Colors.primary, Colors.primaryContainer]}
+              end={{ x: 1, y: 1 }}
+              start={{ x: 0, y: 0 }}
+              style={[styles.iconWrap, styles.iconWrapActive]}
+            >
+              <MaterialIcons color={Colors.onPrimary} name={getTabIcon(route.name)} size={20} />
+            </LinearGradient>
+          ) : (
+            <View style={styles.iconWrap}>
+              <MaterialIcons color={color} name={getTabIcon(route.name)} size={20} />
+            </View>
+          ),
       })}
     >
       <Tab.Screen name="Dashboard" component={DashboardScreen} />
@@ -82,10 +89,7 @@ const styles = StyleSheet.create({
     color: Colors.primary,
   },
   tabBar: {
-    backgroundColor: Colors.tabBarGlass,
-    borderColor: 'rgba(195, 198, 210, 0.2)',
-    borderWidth: 1,
-    borderTopWidth: 1,
+    backgroundColor: Colors.glassSurface,
     borderRadius: 34,
     bottom: 10,
     elevation: 0,
@@ -96,10 +100,10 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     position: 'absolute',
     right: 12,
-    shadowColor: Colors.primary,
+    shadowColor: Colors.textPrimary,
     shadowOffset: { width: 0, height: -10 },
-    shadowOpacity: 0.09,
-    shadowRadius: 20,
+    shadowOpacity: 0.08,
+    shadowRadius: 32,
   },
   item: {
     paddingTop: 0,
@@ -112,7 +116,6 @@ const styles = StyleSheet.create({
     width: 34,
   },
   iconWrapActive: {
-    backgroundColor: Colors.primaryContainer,
     height: 44,
     transform: [{ translateY: -3 }],
     width: 44,

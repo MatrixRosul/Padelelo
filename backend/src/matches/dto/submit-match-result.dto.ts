@@ -14,14 +14,14 @@ class SetScoreDto {
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  @Max(7)
+  @Max(99)
   teamAScore!: number;
 
   @ApiProperty()
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  @Max(7)
+  @Max(99)
   teamBScore!: number;
 
   @ApiPropertyOptional()

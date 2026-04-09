@@ -4,11 +4,12 @@
   "version": "1.0.0",
   "main": "frontend/index.ts",
   "scripts": {
-    "start": "npm --prefix frontend run start --",
-    "android": "npm --prefix frontend run android --",
-    "ios": "npm --prefix frontend run ios --",
-    "web": "npm --prefix frontend run web --",
-    "frontend": "npm --prefix frontend run start --",
-    "backend": "npm --prefix backend run start:dev --"
+    "start": "cd frontend && npm run start --",
+    "start:dev": "cd backend && npm run start:dev --",
+    "android": "cd frontend && npm run android --",
+    "ios": "cd frontend && npm run ios --",
+    "web": "cd frontend && npm run web --",
+    "frontend": "cd frontend && npm run start --",
+    "backend": "cd backend && npm run start:dev --"
   }
 }

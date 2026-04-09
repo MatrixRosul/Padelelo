@@ -1,10 +1,18 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MinLength } from 'class-validator';
 
 export class LoginDto {
-  @ApiProperty()
-  @IsEmail()
-  email!: string;
+  @ApiProperty({ required: false, description: 'Player login or email' })
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  identifier?: string;
+
+  @ApiProperty({ required: false, description: 'Backward-compatible email field' })
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  email?: string;
 
   @ApiProperty()
   @IsString()

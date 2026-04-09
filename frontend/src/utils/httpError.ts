@@ -6,6 +6,15 @@ export function toUserFriendlyError(error: unknown, fallback: string): string {
       return 'Cannot connect to server. Check backend and network.';
     }
 
+    const responseMessage = error.response.data?.message;
+    if (typeof responseMessage === 'string' && responseMessage.trim().length > 0) {
+      return responseMessage;
+    }
+
+    if (Array.isArray(responseMessage) && responseMessage.length > 0) {
+      return responseMessage.join(', ');
+    }
+
     const status = error.response.status;
 
     if (status === 401 || status === 403) {
@@ -14,15 +23,6 @@ export function toUserFriendlyError(error: unknown, fallback: string): string {
 
     if (status === 404) {
       return 'Data not found.';
-    }
-
-    const responseMessage = error.response.data?.message;
-    if (typeof responseMessage === 'string' && responseMessage.trim().length > 0) {
-      return responseMessage;
-    }
-
-    if (Array.isArray(responseMessage) && responseMessage.length > 0) {
-      return responseMessage.join(', ');
     }
 
     return fallback;
